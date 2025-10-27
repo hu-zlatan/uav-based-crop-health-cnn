@@ -1,5 +1,12 @@
 import numpy as np
 import json 
+import paddle
+import os
+import matplotlib
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+import warnings
 
 def load_data():
     #read training data
@@ -23,9 +30,21 @@ def load_data():
 
     training_data = data[:offset, :]
     testing_data = data[offset:, :]
-    return training_data, testing_data
+    return training_data, testing_data, data_mean, data_max, data_min
     
     #get training and testing data
     training_data, testing_data = load_data()
     x_train = training_data[:, :-1]
     y_train = training_data[:, -1]
+BATCH_SIZE = 20
+
+
+def feature_norm(input):
+    f_size = input.shape
+    output_features = np.zeros(f_size, np.float32)
+    for batch_id in range(f_size[0]):
+        for index in range(13):
+            output_features[batch_id][index] = (
+                input[batch_id][index] - data_avg[index]
+            ) / (data_max[index] - data_min[index])
+    return output_features

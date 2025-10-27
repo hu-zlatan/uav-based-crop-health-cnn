@@ -13,3 +13,19 @@ def load_data():
     ratio = 0.8
     offset = int(data.shape[0] * ratio)
     training_data = data[:offset, :]
+    
+    #normalize the data
+    data_mean = np.mean(training_data, axis=0)
+    data_max = np.max(training_data, axis=0)
+    data_min = np.min(training_data, axis=0)
+    for i in range(feature_num):
+        data[:, i] = (data[:, i] - data_min[i]) / (data_max[i] - data_min[i])
+
+    training_data = data[:offset, :]
+    testing_data = data[offset:, :]
+    return training_data, testing_data
+    
+    #get training and testing data
+    training_data, testing_data = load_data()
+    x_train = training_data[:, :-1]
+    y_train = training_data[:, -1]

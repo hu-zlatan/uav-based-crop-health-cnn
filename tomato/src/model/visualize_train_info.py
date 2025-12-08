@@ -2,8 +2,8 @@
 # Model Training Information Visualization Script
 # File: visualize_train_info.py
 # Path: src/model/visualize_train_info.py
-# Function: Plot training curves + Summarize model info + Archive model + Duplicate check
-# Commit: v1.4.0 (2025-12-08) - Fix NoneType iteration error in shape processing
+# Function: Plot training curves + Summarize model info + Archive model + Duplicate protection
+# Commit: v2.0.0 (2025-12-08) - Fix duplicate archive issue (hash-based unique directory)
 # ==============================================================================
 
 import os
@@ -58,42 +58,38 @@ def calculate_model_hash(model_path):
     print(f"✅ Model MD5 hash: {model_hash}")
     return model_hash
 
-def check_existing_archives(model_hash):
-    """Check if model already has archive records"""
-    existing_archives = []
-    if not os.path.exists(RESULTS_DIR):
-        return existing_archives
-    
-    # Scan all train_vis directories
-    for archive_dir in Path(RESULTS_DIR).glob("train_vis_*"):
-        info_path = archive_dir / "model_info.json"
-        if info_path.exists():
-            try:
-                with open(info_path, "r", encoding="utf-8") as f:
-                    info = json.load(f)
-                # Check if model hash exists in info (for existing archives)
-                if "model_hash" in info["basic_info"] and info["basic_info"]["model_hash"] == model_hash:
-                    existing_archives.append(str(archive_dir))
-            except:
-                continue
-    return existing_archives
+def get_model_archive_dir(model_hash):
+    """Get unique archive directory based on model hash (no timestamp)"""
+    # Use full hash for uniqueness (no time suffix)
+    archive_dir = os.path.join(RESULTS_DIR, f"tomato_model_archive_{model_hash}")
+    return archive_dir
 
-def get_user_confirmation(existing_archives, model_path):
-    """Get user confirmation for overwriting duplicate archives"""
-    if not existing_archives:
-        return True  # No duplicates, proceed
+def check_model_archive_exists(model_hash):
+    """Check if model archive already exists (hash-based)"""
+    archive_dir = get_model_archive_dir(model_hash)
+    return os.path.exists(archive_dir)
+
+def get_user_confirmation_for_overwrite(model_hash, model_path):
+    """Get user confirmation for overwriting existing archive"""
+    archive_dir = get_model_archive_dir(model_hash)
     
-    # Show duplicate warning
-    print("\n⚠️  WARNING: Duplicate model detected!")
+    if not os.path.exists(archive_dir):
+        return True  # No existing archive, proceed
+    
+    # Show overwrite warning
+    print("\n⚠️  WARNING: Model archive already exists!")
     print(f"   Model file: {model_path}")
-    print(f"   Already archived in {len(existing_archives)} directories:")
-    for i, archive in enumerate(existing_archives, 1):
-        print(f"      {i}. {archive}")
+    print(f"   Existing archive: {archive_dir}")
+    print(f"   Overwriting will replace ALL files in this directory!")
     
     # Get user input
     while True:
-        user_input = input("\n❓ Do you want to create new archive (y/n)? ").strip().lower()
+        user_input = input("\n❓ Overwrite existing archive (y/n)? ").strip().lower()
         if user_input in ["y", "yes"]:
+            # Backup existing files before overwrite (optional)
+            backup_dir = f"{archive_dir}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.move(archive_dir, backup_dir)
+            print(f"ℹ️  Backed up existing archive to: {backup_dir}")
             return True
         elif user_input in ["n", "no"]:
             print("ℹ️  Operation cancelled by user")
@@ -101,19 +97,17 @@ def get_user_confirmation(existing_archives, model_path):
         else:
             print("❌ Invalid input! Please enter 'y' or 'n'")
 
-def create_archive_directory(model_hash):
-    """Create unique archive directory with model hash in name"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Add first 8 chars of hash to directory name for easy identification
-    vis_output_dir = os.path.join(RESULTS_DIR, f"train_vis_{timestamp}_{model_hash[:8]}")
+def create_model_archive_dir(model_hash):
+    """Create unique archive directory (hash-based, no timestamp)"""
+    archive_dir = get_model_archive_dir(model_hash)
     
-    # Create directories
-    os.makedirs(vis_output_dir, exist_ok=True)
-    os.makedirs(os.path.join(vis_output_dir, "plots"), exist_ok=True)
-    os.makedirs(os.path.join(vis_output_dir, "model"), exist_ok=True)
+    # Create directories (overwrite handled by user confirmation)
+    os.makedirs(archive_dir, exist_ok=True)
+    os.makedirs(os.path.join(archive_dir, "plots"), exist_ok=True)
+    os.makedirs(os.path.join(archive_dir, "model"), exist_ok=True)
     
-    print(f"✅ Archive directory created: {vis_output_dir}")
-    return vis_output_dir
+    print(f"✅ Archive directory created/updated: {archive_dir}")
+    return archive_dir
 
 # ===================== Utility: Load Training Data =====================
 def load_train_data(model_path):
@@ -142,7 +136,7 @@ def load_train_data(model_path):
     return history_df, label_to_idx, model
 
 # ===================== Utility: Plot Training Curves =====================
-def plot_train_curves(history_df, vis_output_dir):
+def plot_train_curves(history_df, archive_dir):
     """Plot training curves (Loss/Accuracy) and save to archive"""
     # Create 2x1 subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
@@ -193,7 +187,7 @@ def plot_train_curves(history_df, vis_output_dir):
 
     # Save plot
     plt.tight_layout()
-    plot_path = os.path.join(vis_output_dir, "plots", f"train_curves.{IMG_FORMAT}")
+    plot_path = os.path.join(archive_dir, "plots", f"train_curves.{IMG_FORMAT}")
     plt.savefig(plot_path, dpi=IMG_DPI, bbox_inches="tight")
     plt.close()
     print(f"✅ Training curves saved to: {plot_path}")
@@ -205,38 +199,24 @@ def plot_train_curves(history_df, vis_output_dir):
         "min_train_loss": float(min_train_loss),
         "min_val_loss": float(min_val_loss),
         "best_epoch_val_acc": int(history_df["val_accuracy"].idxmax() + 1),
-        "total_epochs": len(epochs)
+        "total_epochs": len(epochs),
+        "plot_generation_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     return key_metrics
 
 # ===================== Utility: Archive Model File =====================
-def archive_model_file(model_source_path, vis_output_dir):
-    """Copy .keras model file to archive directory with validation"""
-    model_dest_path = os.path.join(vis_output_dir, "model", "best_tomato_model.keras")
+def archive_model_file(model_source_path, archive_dir):
+    """Copy .keras model file to hash-based archive directory"""
+    model_dest_path = os.path.join(archive_dir, "model", "best_tomato_model.keras")
     
-    # Check if destination exists
-    if os.path.exists(model_dest_path):
-        print(f"⚠️  Existing model file in archive: {model_dest_path}")
-        while True:
-            user_input = input("❓ Overwrite existing model file (y/n)? ").strip().lower()
-            if user_input in ["y", "yes"]:
-                shutil.copy2(model_source_path, model_dest_path)
-                print(f"✅ Model file overwritten: {model_dest_path}")
-                break
-            elif user_input in ["n", "no"]:
-                print(f"ℹ️  Skipping model file copy")
-                model_dest_path = None
-                break
-            else:
-                print("❌ Invalid input! Please enter 'y' or 'n'")
-    else:
-        shutil.copy2(model_source_path, model_dest_path)
-        print(f"✅ Model file archived to: {model_dest_path}")
+    # Copy model file (overwrite if exists)
+    shutil.copy2(model_source_path, model_dest_path)
+    print(f"✅ Model file archived to: {model_dest_path}")
     
     return model_dest_path
 
 # ===================== Utility: Summarize Model Info =====================
-def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, model_hash, vis_output_dir):
+def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, model_hash, archive_dir):
     """Summarize core model information with hash for unique identification"""
     # 1. Get model summary as text
     model_summary = []
@@ -246,19 +226,15 @@ def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, m
     # 2. Safe shape conversion (fix NoneType error)
     def convert_shape(shape):
         """Safe conversion of model shape with None handling"""
-        # Handle None shape
         if shape is None:
             return None
-        # Handle TensorFlow shape object
         if isinstance(shape, tf.TensorShape):
             shape = shape.as_list()
-        # Handle non-iterable shapes
         if not isinstance(shape, (list, tuple)):
             return int(shape) if shape is not None else None
-        # Convert each dimension to int (handle None in dimensions)
         return [int(dim) if dim is not None else None for dim in shape]
 
-    # 3. Get safe input/output shapes (handle model with multiple inputs/outputs)
+    # 3. Get safe input/output shapes
     try:
         input_shape = convert_shape(model.input_shape[0] if isinstance(model.input_shape, (list, tuple)) else model.input_shape)
     except:
@@ -269,19 +245,20 @@ def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, m
     except:
         output_shape = None
 
-    # 4. Core model information dictionary
+    # 4. Core model information dictionary (with update time)
     model_info = {
         "basic_info": {
             "model_name": model.name,
-            "model_hash": model_hash,  # Unique model identifier
+            "model_hash": model_hash,  # Unique model identifier (no duplicates)
             "total_parameters": int(model.count_params()),
             "trainable_parameters": int(sum([np.prod(layer.shape) for layer in model.trainable_weights])),
             "non_trainable_parameters": int(sum([np.prod(layer.shape) for layer in model.non_trainable_weights])),
             "input_shape": input_shape,
             "output_shape": output_shape,
-            "archive_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "archive_creation_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_updated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "model_archive_path": model_archive_path,
-            "archive_directory": vis_output_dir
+            "archive_directory": archive_dir
         },
         "training_metrics": key_metrics,
         "dataset_info": {
@@ -296,14 +273,29 @@ def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, m
         }
     }
 
-    # 5. Save model info with custom JSON encoder
-    info_path = os.path.join(vis_output_dir, "model_info.json")
+    # 5. Update existing info if available (preserve history)
+    info_path = os.path.join(archive_dir, "model_info.json")
+    if os.path.exists(info_path):
+        try:
+            with open(info_path, "r", encoding="utf-8") as f:
+                existing_info = json.load(f)
+            # Preserve creation time, update last updated time
+            model_info["basic_info"]["archive_creation_time"] = existing_info["basic_info"].get("archive_creation_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            # Append training metrics history
+            if "training_metrics_history" not in existing_info:
+                existing_info["training_metrics_history"] = []
+            existing_info["training_metrics_history"].append(key_metrics)
+            model_info["training_metrics_history"] = existing_info["training_metrics_history"]
+        except:
+            pass
+
+    # 6. Save model info with custom JSON encoder
     with open(info_path, "w", encoding="utf-8") as f:
         json.dump(model_info, f, cls=NumpyEncoder, ensure_ascii=False, indent=4)
     print(f"✅ Model information saved to: {info_path}")
 
-    # 6. Save model summary as text
-    summary_path = os.path.join(vis_output_dir, "model_summary.txt")
+    # 7. Save model summary as text
+    summary_path = os.path.join(archive_dir, "model_summary.txt")
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(model_summary_text)
     print(f"✅ Model summary saved to: {summary_path}")
@@ -312,38 +304,35 @@ def summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, m
 
 # ===================== Main Function =====================
 def main():
-    """Main workflow with model validation and duplicate protection"""
-    print("🚀 Starting model training information visualization with validation...")
+    """Main workflow with hash-based unique archive (no duplicates)"""
+    print("🚀 Starting model training information visualization (v2.0) - Hash-based archive...")
     
     # 1. Define model path
     model_path = os.path.join(PROCESSED_DIR, "best_tomato_model.keras")
     
-    # 2. Model validation and duplicate check
+    # 2. Core duplicate protection logic
     try:
-        # Calculate model hash
+        # Calculate model hash (unique identifier)
         model_hash = calculate_model_hash(model_path)
         
-        # Check existing archives
-        existing_archives = check_existing_archives(model_hash)
-        
-        # Get user confirmation
-        if not get_user_confirmation(existing_archives, model_path):
+        # Check if archive exists and get user confirmation
+        if not get_user_confirmation_for_overwrite(model_hash, model_path):
             return  # Exit if user cancels
         
-        # Create archive directory
-        vis_output_dir = create_archive_directory(model_hash)
+        # Create unique hash-based archive directory (no timestamp)
+        archive_dir = create_model_archive_dir(model_hash)
         
         # 3. Load training data
         history_df, label_to_idx, model = load_train_data(model_path)
         
         # 4. Plot training curves
-        key_metrics = plot_train_curves(history_df, vis_output_dir)
+        key_metrics = plot_train_curves(history_df, archive_dir)
         
-        # 5. Archive model file
-        model_archive_path = archive_model_file(model_path, vis_output_dir)
+        # 5. Archive model file (overwrite with user confirmation)
+        model_archive_path = archive_model_file(model_path, archive_dir)
         
         # 6. Summarize and save model information
-        model_info = summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, model_hash, vis_output_dir)
+        model_info = summarize_model_info(model, label_to_idx, key_metrics, model_archive_path, model_hash, archive_dir)
         
         # 7. Print final summary
         print("\n📊 Model Training Core Metrics Summary:")
@@ -353,8 +342,9 @@ def main():
         print(f"   - Trainable Parameters: {model_info['basic_info']['trainable_parameters']:,}")
         print(f"   - Number of Classes: {model_info['dataset_info']['number_of_classes']}")
         print(f"   - Model Hash: {model_hash}")
+        print(f"   - Archive Directory: {archive_dir}")
 
-        print(f"\n🎉 All results archived to: {vis_output_dir}")
+        print(f"\n🎉 All results archived to hash-based directory: {archive_dir}")
         print(f"   - Training curves: plots/train_curves.{IMG_FORMAT}")
         print(f"   - Model file: model/best_tomato_model.keras")
         print(f"   - Model information: model_info.json")
@@ -363,7 +353,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Error during visualization: {str(e)}")
         import traceback
-        traceback.print_exc()  # Print full traceback for debugging
+        traceback.print_exc()
         raise
 
 if __name__ == "__main__":

@@ -1,0 +1,46 @@
+{
+    "basic_info": {
+        "model_name": "sequential",
+        "model_hash": "680e6f04a0891c460bb41bcfbd8154c8",
+        "total_parameters": 2588490,
+        "trainable_parameters": 330506,
+        "non_trainable_parameters": 2257984,
+        "input_shape": null,
+        "output_shape": null,
+        "archive_time": "2025-12-08 22:55:02",
+        "model_archive_path": "D:\\Project-temp\\uav-based-crop-health-cnn\\tomato\\results\\train_vis_20251208_225459_680e6f04\\model\\best_tomato_model.keras",
+        "archive_directory": "D:\\Project-temp\\uav-based-crop-health-cnn\\tomato\\results\\train_vis_20251208_225459_680e6f04"
+    },
+    "training_metrics": {
+        "max_train_accuracy": 0.9085116386413574,
+        "max_val_accuracy": 0.8893171548843384,
+        "min_train_loss": 0.3137629926204681,
+        "min_val_loss": 0.377983421087265,
+        "best_epoch_val_acc": 20,
+        "total_epochs": 26
+    },
+    "dataset_info": {
+        "number_of_classes": 10,
+        "label_mapping": {
+            "Bacterial Spot": 0,
+            "Early Blight": 1,
+            "Healthy": 2,
+            "Late Blight": 3,
+            "Leaf Mold": 4,
+            "Septoria Leaf Spot": 5,
+            "Spider Mites Two-Spotted Spider Mite": 6,
+            "Target Spot": 7,
+            "Tomato Mosaic Virus": 8,
+            "Tomato Yellow Leaf Curl Virus": 9
+        }
+    },
+    "training_configuration": {
+        "batch_size": 32,
+        "base_learning_rate": 0.0001,
+        "fine_tune_learning_rate": 1e-05,
+        "image_size": [
+            256,
+            256
+        ]
+    }
+}

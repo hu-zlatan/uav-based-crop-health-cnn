@@ -1,8 +1,8 @@
 # ==============================================================================
-# Enhanced Model Evaluation GUI Tool (v3.0)
+# Enhanced Model Evaluation GUI Tool (v4.0)
 # File: evaluate_model_gui.py
 # Path: src/model/evaluate_model_gui.py
-# Features: Hash+Date display + Confidence score + Full metrics + Duplicate protection
+# Features: Summary Page + All Numeric Metrics + Hash+Date + Confidence
 # ==============================================================================
 
 import os
@@ -88,6 +88,53 @@ def get_overwrite_confirmation(model_name):
         f"Model '{model_name}' has been evaluated before!\n"
         "Do you want to overwrite existing results?"
     )
+
+# ===================== Utility: Load All Evaluated Models Summary =====================
+def load_all_evaluated_models_summary():
+    """Load summary data for all evaluated models"""
+    summary_data = []
+    
+    if not os.path.exists(EVALUATION_DIR):
+        return summary_data
+    
+    # Iterate through all model evaluation directories
+    for model_hash in os.listdir(EVALUATION_DIR):
+        eval_dir = os.path.join(EVALUATION_DIR, model_hash)
+        metrics_path = os.path.join(eval_dir, "evaluation_metrics.csv")
+        class_metrics_path = os.path.join(eval_dir, "class_wise_metrics.csv")
+        
+        if os.path.exists(metrics_path):
+            # Load main metrics
+            metrics_df = pd.read_csv(metrics_path)
+            model_name = metrics_df["model_name"].iloc[0]
+            short_hash = model_name.split("(")[-1].split("-")[0] if "(" in model_name else model_hash[:6]
+            
+            # Calculate average class accuracy
+            avg_class_acc = 0
+            if os.path.exists(class_metrics_path):
+                class_df = pd.read_csv(class_metrics_path)
+                avg_class_acc = class_df["class_accuracy"].mean() * 100
+            
+            # Format numeric values
+            summary_data.append({
+                "model_name": model_name,
+                "short_hash": short_hash,
+                "accuracy": round(metrics_df["accuracy"].iloc[0], 2),
+                "precision": round(metrics_df["macro_precision"].iloc[0], 2),
+                "recall": round(metrics_df["macro_recall"].iloc[0], 2),
+                "f1_score": round(metrics_df["macro_f1"].iloc[0], 2),
+                "avg_class_accuracy": round(avg_class_acc, 2),
+                "total_params": f"{int(metrics_df['total_params'].iloc[0]):,}",
+                "trainable_params": f"{int(metrics_df['trainable_params'].iloc[0]):,}",
+                "flops": f"{int(metrics_df['flops'].iloc[0]):,}" if metrics_df['flops'].iloc[0] != "Calculation failed" else "N/A",
+                "avg_inference_time_ms": round(metrics_df["avg_inference_time_ms"].iloc[0], 2),
+                "fps": round(metrics_df["fps"].iloc[0], 2),
+                "mem_usage_mb": round(metrics_df["mem_usage_mb"].iloc[0], 2),
+                "model_size_mb": round(metrics_df["model_size_mb"].iloc[0], 2),
+                "evaluation_time": metrics_df["evaluation_time"].iloc[0]
+            })
+    
+    return summary_data
 
 # ===================== Utility: Load Validation Data =====================
 def load_validation_data():
@@ -533,12 +580,88 @@ def save_evaluation_results(model_name, model_path, eval_results, train_history,
     
     return save_dir
 
+# ===================== GUI: Summary Page =====================
+def create_summary_page(notebook):
+    """Create summary page with all numeric metrics in table format"""
+    summary_frame = ttk.Frame(notebook, padding="10")
+    notebook.add(summary_frame, text="Metrics Summary (All Models)")
+    
+    # Refresh button
+    refresh_btn = ttk.Button(summary_frame, text="Refresh Summary", command=lambda: update_summary_table(tree))
+    refresh_btn.pack(anchor=tk.W, pady=(0, 10))
+    
+    # Create treeview for summary table
+    columns = [
+        "Model Name", "Hash", "Accuracy (%)", "Precision (%)", "Recall (%)", 
+        "F1-Score (%)", "Avg Class Acc (%)", "Total Params", "Trainable Params",
+        "FLOPs", "Infer Time (ms/img)", "FPS", "Mem Usage (MB)", "Model Size (MB)", "Eval Time"
+    ]
+    tree = ttk.Treeview(summary_frame, columns=columns, show="headings", height=10)
+    
+    # Set column headings and widths
+    column_widths = [
+        200, 60, 80, 80, 80, 80, 80, 120, 120,
+        150, 100, 80, 80, 80, 150
+    ]
+    for i, col in enumerate(columns):
+        tree.heading(col, text=col)
+        tree.column(col, width=column_widths[i], anchor=tk.CENTER)
+    
+    # Add scrollbars
+    v_scroll = ttk.Scrollbar(summary_frame, orient=tk.VERTICAL, command=tree.yview)
+    h_scroll = ttk.Scrollbar(summary_frame, orient=tk.HORIZONTAL, command=tree.xview)
+    tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+    
+    # Layout
+    tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+    
+    # Initial update
+    update_summary_table(tree)
+    
+    return summary_frame
+
+def update_summary_table(tree):
+    """Update summary table with latest data"""
+    # Clear existing entries
+    for item in tree.get_children():
+        tree.delete(item)
+    
+    # Load summary data
+    summary_data = load_all_evaluated_models_summary()
+    
+    if not summary_data:
+        tree.insert("", tk.END, values=["No models evaluated yet"] + [""]*14)
+        return
+    
+    # Add rows to treeview
+    for data in summary_data:
+        values = [
+            data["model_name"][:50] + "..." if len(data["model_name"]) > 50 else data["model_name"],
+            data["short_hash"],
+            data["accuracy"],
+            data["precision"],
+            data["recall"],
+            data["f1_score"],
+            data["avg_class_accuracy"],
+            data["total_params"],
+            data["trainable_params"],
+            data["flops"],
+            data["avg_inference_time_ms"],
+            data["fps"],
+            data["mem_usage_mb"],
+            data["model_size_mb"],
+            data["evaluation_time"]
+        ]
+        tree.insert("", tk.END, values=values)
+
 # ===================== GUI Main Class =====================
 class ModelEvaluationGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool (v3.0)")
-        self.root.geometry("1400x900")
+        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool (v4.0)")
+        self.root.geometry("1600x900")
         
         # Load validation data
         self.val_images, self.val_labels, self.idx_to_label, self.val_img_paths, self.train_history, self.class_names = load_validation_data()
@@ -582,25 +705,28 @@ class ModelEvaluationGUI:
         self.results_text = tk.Text(self.select_frame, height=20, width=120)
         self.results_text.pack(fill=tk.BOTH, expand=True)
         
-        # 2. Sample Predictions Tab (with Confidence)
+        # 2. Metrics Summary Tab (NEW)
+        self.summary_frame = create_summary_page(self.notebook)
+        
+        # 3. Sample Predictions Tab (with Confidence)
         self.sample_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.sample_frame, text="Sample Predictions (with Confidence)")
         self.sample_canvas = ttk.Frame(self.sample_frame)
         self.sample_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # 3. Confusion Matrix Tab
+        # 4. Confusion Matrix Tab
         self.conf_matrix_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.conf_matrix_frame, text="Confusion Matrix")
         self.conf_matrix_canvas = ttk.Frame(self.conf_matrix_frame)
         self.conf_matrix_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # 4. Loss Curves Tab
+        # 5. Loss Curves Tab
         self.loss_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.loss_frame, text="Training/Validation Curves")
         self.loss_canvas = ttk.Frame(self.loss_frame)
         self.loss_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # 5. Class-wise Metrics Tab
+        # 6. Class-wise Metrics Tab
         self.class_metrics_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.class_metrics_frame, text="Class-wise Metrics")
         self.class_metrics_canvas = ttk.Frame(self.class_metrics_frame)
@@ -722,8 +848,13 @@ RESULTS SAVED TO: {save_dir}
             self.train_history, self.class_names, save_dir
         )
         
+        # Refresh summary table
+        for child in self.summary_frame.winfo_children():
+            if isinstance(child, ttk.Treeview):
+                update_summary_table(child)
+        
         self.results_text.insert(tk.END, f"\n✅ All results (including confidence scores) saved to:\n{save_path}")
-        messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results (including confidence scores) have been saved.")
+        messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results (including confidence scores) have been saved.\nSummary table has been updated.")
 
 # ===================== Main Function =====================
 def main():

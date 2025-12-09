@@ -1,8 +1,8 @@
 # ==============================================================================
-# Enhanced Model Evaluation GUI Tool
+# Enhanced Model Evaluation GUI Tool (v3.0)
 # File: evaluate_model_gui.py
 # Path: src/model/evaluate_model_gui.py
-# Features: Full metrics + confusion matrix + loss curves + duplicate protection
+# Features: Hash+Date display + Confidence score + Full metrics + Duplicate protection
 # ==============================================================================
 
 import os
@@ -20,6 +20,7 @@ import seaborn as sns
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+from datetime import datetime
 
 # ===================== Global Configuration =====================
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,14 +33,45 @@ plt.rcParams["font.family"] = ["DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# ===================== Utility: Calculate Model Hash =====================
+# ===================== Utility: Model Metadata Extraction =====================
 def calculate_model_hash(model_path):
-    """Calculate MD5 hash for model file (unique identifier)"""
+    """Calculate MD5 hash for model file (return first 6 chars + full hash)"""
     hash_md5 = hashlib.md5()
     with open(model_path, "rb") as f:
         for chunk in iter(lambda: f.read(4096), b""):
             hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+    full_hash = hash_md5.hexdigest()
+    short_hash = full_hash[:6]  # 前6位Hash
+    return short_hash, full_hash
+
+def get_model_creation_date(model_path):
+    """Get model file creation date (YYYYMMDD format)"""
+    # Try to extract from directory name first (archive format)
+    model_dir = os.path.dirname(model_path)
+    dir_name = os.path.basename(model_dir)
+    
+    # Extract date from archive directory name (e.g., train_vis_20251208_225236_680e6f04)
+    if "train_vis_" in dir_name or "tomato_model_archive_" in dir_name:
+        date_parts = dir_name.split("_")
+        for part in date_parts:
+            if len(part) == 8 and part.isdigit():
+                return part
+    
+    # Fallback to file creation time
+    create_time = os.path.getctime(model_path)
+    return datetime.fromtimestamp(create_time).strftime("%Y%m%d")
+
+def format_model_display_name(model_name, model_path):
+    """Format model display name with short hash + date (e.g., 8h64cd-20251208)"""
+    short_hash, _ = calculate_model_hash(model_path)
+    create_date = get_model_creation_date(model_path)
+    
+    if model_name == "Current Best Model":
+        return f"Current Best Model ({short_hash}-{create_date})"
+    else:
+        # For archive models: extract original name + add hash-date
+        base_name = model_name.replace("Archive: ", "")
+        return f"Archive: {base_name} ({short_hash}-{create_date})"
 
 # ===================== Utility: Check Duplicate Evaluation =====================
 def check_duplicate_evaluation(model_hash):
@@ -64,7 +96,7 @@ def load_validation_data():
     label_to_idx_path = os.path.join(PROCESSED_DIR, "label_to_idx.npy")
     if not os.path.exists(label_to_idx_path):
         messagebox.showerror("Error", f"Label mapping file not found:\n{label_to_idx_path}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     
     label_to_idx = np.load(label_to_idx_path, allow_pickle=True).item()
     idx_to_label = {v: k for k, v in label_to_idx.items()}
@@ -74,7 +106,7 @@ def load_validation_data():
     val_csv_path = os.path.join(PROCESSED_DIR, "val.csv")
     if not os.path.exists(val_csv_path):
         messagebox.showerror("Error", f"Validation CSV not found:\n{val_csv_path}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     
     val_df = pd.read_csv(val_csv_path)
     
@@ -103,13 +135,17 @@ def load_validation_data():
 
 # ===================== Utility: Get Model List =====================
 def get_available_models():
-    """Get list of available models (best_model + results directory models)"""
+    """Get list of available models with formatted display names"""
     model_files = []
+    model_metadata = []  # Store (display_name, path, short_hash, full_hash)
     
     # Add best_tomato_model.keras
     best_model_path = os.path.join(PROCESSED_DIR, "best_tomato_model.keras")
     if os.path.exists(best_model_path):
-        model_files.append(("Current Best Model", best_model_path))
+        display_name = format_model_display_name("Current Best Model", best_model_path)
+        short_hash, full_hash = calculate_model_hash(best_model_path)
+        model_files.append((display_name, best_model_path))
+        model_metadata.append((display_name, best_model_path, short_hash, full_hash))
     
     # Add models from results directory
     if os.path.exists(RESULTS_DIR):
@@ -118,39 +154,33 @@ def get_available_models():
                 if file.endswith(".keras") and "best_tomato_model" in file:
                     model_path = os.path.join(root, file)
                     dir_name = os.path.basename(os.path.dirname(model_path))
-                    model_files.append((f"Archive: {dir_name}", model_path))
+                    original_name = f"Archive: {dir_name}"
+                    display_name = format_model_display_name(original_name, model_path)
+                    short_hash, full_hash = calculate_model_hash(model_path)
+                    model_files.append((display_name, model_path))
+                    model_metadata.append((display_name, model_path, short_hash, full_hash))
     
-    return model_files
+    return model_files, model_metadata
 
 # ===================== Utility: Calculate Advanced Metrics =====================
 def calculate_classification_metrics(true_labels, pred_labels, num_classes):
     """Calculate precision, recall, F1-score, class accuracy"""
-    # Initialize metrics
     precision = np.zeros(num_classes)
     recall = np.zeros(num_classes)
     f1 = np.zeros(num_classes)
     class_accuracy = np.zeros(num_classes)
     
     for cls in range(num_classes):
-        # True positive, false positive, false negative
         tp = np.sum((true_labels == cls) & (pred_labels == cls))
         fp = np.sum((true_labels != cls) & (pred_labels == cls))
         fn = np.sum((true_labels == cls) & (pred_labels != cls))
         tn = np.sum((true_labels != cls) & (pred_labels != cls))
         
-        # Precision (avoid division by zero)
         precision[cls] = tp / (tp + fp) if (tp + fp) > 0 else 0
-        
-        # Recall
         recall[cls] = tp / (tp + fn) if (tp + fn) > 0 else 0
-        
-        # F1-score
         f1[cls] = 2 * (precision[cls] * recall[cls]) / (precision[cls] + recall[cls]) if (precision[cls] + recall[cls]) > 0 else 0
-        
-        # Class accuracy
         class_accuracy[cls] = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
     
-    # Macro average
     macro_precision = np.mean(precision)
     macro_recall = np.mean(recall)
     macro_f1 = np.mean(f1)
@@ -168,7 +198,6 @@ def calculate_classification_metrics(true_labels, pred_labels, num_classes):
 def calculate_flops(model):
     """Calculate FLOPs for the model"""
     try:
-        # Convert model to concrete function
         input_shape = model.input_shape
         if isinstance(input_shape, list):
             input_shape = input_shape[0]
@@ -178,11 +207,9 @@ def calculate_flops(model):
             tf.TensorSpec(input_shape, model.inputs[0].dtype)
         )
         
-        # Convert to frozen graph
         frozen_func = convert_variables_to_constants_v2(concrete_func)
         graph = frozen_func.graph
         
-        # Calculate FLOPs
         run_meta = tf.compat.v1.RunMetadata()
         opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
         flops = tf.compat.v1.profiler.profile(graph=graph, run_meta=run_meta, cmd='op', options=opts)
@@ -200,7 +227,7 @@ def calculate_model_size(model_path):
 
 # ===================== Utility: Evaluate Model =====================
 def evaluate_model(model_path, val_images, val_labels, class_names):
-    """Comprehensive model evaluation with all metrics"""
+    """Comprehensive model evaluation with all metrics (including confidence)"""
     try:
         # Load model
         model = tf.keras.models.load_model(model_path)
@@ -211,14 +238,17 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
         mem_before = process.memory_info().rss / 1024 / 1024  # MB
         gpu_mem_before = tf.config.experimental.get_memory_info('GPU:0')['used'] / 1024 / 1024 if tf.config.list_physical_devices('GPU') else 0
         
-        # 2. Inference speed measurement
-        # Warm up
-        model.predict(val_images[:10], verbose=0)
+        # 2. Inference speed measurement (with confidence scores)
+        model.predict(val_images[:10], verbose=0)  # Warm up
         
-        # Actual inference
         start_time = time.time()
-        predictions = model.predict(val_images, verbose=0)
+        predictions = model.predict(val_images, verbose=0)  # Raw probability scores
         inference_time = time.time() - start_time
+        
+        # Calculate confidence scores (max probability)
+        confidence_scores = np.max(predictions, axis=1)
+        pred_labels = np.argmax(predictions, axis=1)
+        
         avg_inference_time = inference_time / len(val_images) * 1000  # ms per image
         fps = len(val_images) / inference_time  # frames per second
         
@@ -229,10 +259,7 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
         gpu_mem_usage = gpu_mem_after - gpu_mem_before if tf.config.list_physical_devices('GPU') else 0
         
         # 4. Classification metrics
-        pred_labels = np.argmax(predictions, axis=1)
         accuracy = np.mean(pred_labels == val_labels) * 100
-        
-        # Advanced classification metrics
         cls_metrics = calculate_classification_metrics(val_labels, pred_labels, num_classes)
         
         # 5. Model parameters
@@ -250,6 +277,7 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
         return {
             "model": model,
             "predictions": pred_labels,
+            "confidence_scores": confidence_scores,  # Add confidence scores
             "conf_matrix": conf_matrix,
             # Basic metrics
             "accuracy": accuracy,
@@ -284,7 +312,7 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
         traceback.print_exc()
         return None
 
-# ===================== Utility: Visualization Functions =====================
+# ===================== Utility: Visualization Functions (with Confidence) =====================
 def plot_confusion_matrix(canvas, conf_matrix, class_names):
     """Plot confusion matrix heatmap"""
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -296,7 +324,6 @@ def plot_confusion_matrix(canvas, conf_matrix, class_names):
     plt.xticks(rotation=45, ha="right")
     plt.yticks(rotation=0)
     
-    # Clear and display
     for widget in canvas.winfo_children():
         widget.destroy()
     plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
@@ -312,7 +339,6 @@ def plot_loss_curves(canvas, train_history):
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    # Loss curve
     ax1.plot(train_history["loss"], label="Training Loss", linewidth=2)
     ax1.plot(train_history["val_loss"], label="Validation Loss", linewidth=2)
     ax1.set_title("Training & Validation Loss", fontsize=14, fontweight="bold")
@@ -321,7 +347,6 @@ def plot_loss_curves(canvas, train_history):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Accuracy curve
     ax2.plot(train_history["accuracy"], label="Training Accuracy", linewidth=2)
     ax2.plot(train_history["val_accuracy"], label="Validation Accuracy", linewidth=2)
     ax2.set_title("Training & Validation Accuracy", fontsize=14, fontweight="bold")
@@ -330,7 +355,6 @@ def plot_loss_curves(canvas, train_history):
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
-    # Clear and display
     for widget in canvas.winfo_children():
         widget.destroy()
     plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
@@ -339,24 +363,30 @@ def plot_loss_curves(canvas, train_history):
     plt.close(fig)
     return fig
 
-def plot_sample_results(canvas, val_images, val_img_paths, val_labels, pred_labels, idx_to_label):
-    """Display sample prediction results"""
+def plot_sample_results(canvas, val_images, val_img_paths, val_labels, pred_labels, confidence_scores, idx_to_label):
+    """Display sample prediction results WITH CONFIDENCE SCORES"""
     sample_indices = np.random.choice(len(val_images), NUM_SAMPLE_IMAGES, replace=False)
     
     fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-    fig.suptitle("Model Prediction Results (8 Random Samples)", fontsize=16, fontweight="bold")
+    fig.suptitle("Model Prediction Results (8 Random Samples) - With Confidence Scores", fontsize=16, fontweight="bold")
     axes = axes.flatten()
     
     for i, idx in enumerate(sample_indices):
+        # Display image
         axes[i].imshow(val_images[idx])
         axes[i].axis("off")
         
+        # Get labels and confidence
         true_label = idx_to_label[val_labels[idx]]
         pred_label = idx_to_label[pred_labels[idx]]
+        confidence = confidence_scores[idx] * 100  # Convert to percentage
         color = "green" if true_label == pred_label else "red"
         
-        axes[i].set_title(f"True: {true_label}\nPred: {pred_label}", 
-                          color=color, fontsize=10)
+        # Set title with confidence score
+        axes[i].set_title(
+            f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.1f}%",
+            color=color, fontsize=10
+        )
     
     # Clear and display
     for widget in canvas.winfo_children():
@@ -371,7 +401,6 @@ def plot_class_metrics(canvas, metrics, class_names):
     """Plot class-wise precision, recall, F1-score"""
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
     
-    # Precision
     ax1.bar(range(len(class_names)), metrics["precision"], color="skyblue")
     ax1.set_title("Class-wise Precision", fontsize=14, fontweight="bold")
     ax1.set_xlabel("Class", fontsize=12)
@@ -381,7 +410,6 @@ def plot_class_metrics(canvas, metrics, class_names):
     ax1.set_ylim(0, 1)
     ax1.grid(True, alpha=0.3)
     
-    # Recall
     ax2.bar(range(len(class_names)), metrics["recall"], color="lightgreen")
     ax2.set_title("Class-wise Recall", fontsize=14, fontweight="bold")
     ax2.set_xlabel("Class", fontsize=12)
@@ -391,7 +419,6 @@ def plot_class_metrics(canvas, metrics, class_names):
     ax2.set_ylim(0, 1)
     ax2.grid(True, alpha=0.3)
     
-    # F1-score
     ax3.bar(range(len(class_names)), metrics["f1"], color="salmon")
     ax3.set_title("Class-wise F1-Score", fontsize=14, fontweight="bold")
     ax3.set_xlabel("Class", fontsize=12)
@@ -401,7 +428,6 @@ def plot_class_metrics(canvas, metrics, class_names):
     ax3.set_ylim(0, 1)
     ax3.grid(True, alpha=0.3)
     
-    # Clear and display
     for widget in canvas.winfo_children():
         widget.destroy()
     plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
@@ -412,7 +438,7 @@ def plot_class_metrics(canvas, metrics, class_names):
 
 # ===================== Utility: Save Results =====================
 def save_evaluation_results(model_name, model_path, eval_results, train_history, class_names, save_dir):
-    """Save all evaluation results to files"""
+    """Save all evaluation results to files (including confidence)"""
     os.makedirs(save_dir, exist_ok=True)
     
     # 1. Save numerical metrics to CSV
@@ -451,12 +477,13 @@ def save_evaluation_results(model_name, model_path, eval_results, train_history,
     # 3. Save confusion matrix
     np.save(os.path.join(save_dir, "confusion_matrix.npy"), eval_results["conf_matrix"])
     
-    # 4. Save sample predictions
-    sample_pred_df = pd.DataFrame({
+    # 4. Save predictions with confidence scores
+    pred_df = pd.DataFrame({
         "true_label": eval_results["predictions"],
-        "pred_label": eval_results["predictions"]
+        "pred_label": eval_results["predictions"],
+        "confidence_score": eval_results["confidence_scores"]  # Add confidence
     })
-    sample_pred_df.to_csv(os.path.join(save_dir, "predictions.csv"), index=False)
+    pred_df.to_csv(os.path.join(save_dir, "predictions_with_confidence.csv"), index=False)
     
     # 5. Save plots as PNG
     # Confusion matrix
@@ -510,7 +537,7 @@ def save_evaluation_results(model_name, model_path, eval_results, train_history,
 class ModelEvaluationGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool")
+        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool (v3.0)")
         self.root.geometry("1400x900")
         
         # Load validation data
@@ -519,8 +546,8 @@ class ModelEvaluationGUI:
             root.quit()
             return
         
-        # Get available models
-        self.model_files = get_available_models()
+        # Get available models with metadata
+        self.model_files, self.model_metadata = get_available_models()
         if not self.model_files:
             messagebox.showerror("Error", "No model files found!")
             root.quit()
@@ -538,11 +565,11 @@ class ModelEvaluationGUI:
         self.select_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.select_frame, text="Model Selection")
         
-        # Model selection combo
-        ttk.Label(self.select_frame, text="Select Model:").pack(anchor=tk.W, pady=(0, 5))
+        # Model selection combo (with Hash+Date)
+        ttk.Label(self.select_frame, text="Select Model (Hash-Date):", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         self.model_var = tk.StringVar()
         model_names = [name for name, path in self.model_files]
-        self.model_combo = ttk.Combobox(self.select_frame, textvariable=self.model_var, values=model_names, state="readonly", width=80)
+        self.model_combo = ttk.Combobox(self.select_frame, textvariable=self.model_var, values=model_names, state="readonly", width=100)
         self.model_combo.current(0)
         self.model_combo.pack(anchor=tk.W, pady=(0, 10))
         
@@ -551,13 +578,13 @@ class ModelEvaluationGUI:
         self.eval_btn.pack(anchor=tk.W, pady=(0, 20))
         
         # Evaluation results text
-        ttk.Label(self.select_frame, text="Evaluation Log:").pack(anchor=tk.W)
-        self.results_text = tk.Text(self.select_frame, height=20, width=100)
+        ttk.Label(self.select_frame, text="Evaluation Log:", font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        self.results_text = tk.Text(self.select_frame, height=20, width=120)
         self.results_text.pack(fill=tk.BOTH, expand=True)
         
-        # 2. Sample Predictions Tab
+        # 2. Sample Predictions Tab (with Confidence)
         self.sample_frame = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(self.sample_frame, text="Sample Predictions")
+        self.notebook.add(self.sample_frame, text="Sample Predictions (with Confidence)")
         self.sample_canvas = ttk.Frame(self.sample_frame)
         self.sample_canvas.pack(fill=tk.BOTH, expand=True)
         
@@ -581,23 +608,23 @@ class ModelEvaluationGUI:
     
     def run_evaluation(self):
         """Run full model evaluation workflow"""
-        # Get selected model
+        # Get selected model metadata
         selected_idx = self.model_combo.current()
-        model_name, model_path = self.model_files[selected_idx]
+        display_name, model_path = self.model_files[selected_idx]
+        _, _, short_hash, full_hash = self.model_metadata[selected_idx]
         
         # Check for duplicate evaluation
-        model_hash = calculate_model_hash(model_path)
-        is_duplicate, save_dir = check_duplicate_evaluation(model_hash)
+        is_duplicate, save_dir = check_duplicate_evaluation(full_hash)
         
-        if is_duplicate and not get_overwrite_confirmation(model_name):
+        if is_duplicate and not get_overwrite_confirmation(display_name):
             self.results_text.insert(tk.END, "Evaluation cancelled by user.\n")
             return
         
         # Clear previous results
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, f"Starting evaluation for: {model_name}\n")
+        self.results_text.insert(tk.END, f"Starting evaluation for: {display_name}\n")
         self.results_text.insert(tk.END, f"Model path: {model_path}\n")
-        self.results_text.insert(tk.END, f"Model hash: {model_hash}\n")
+        self.results_text.insert(tk.END, f"Model short hash: {short_hash} | Full hash: {full_hash}\n")
         self.results_text.insert(tk.END, "Please wait - this may take several minutes...\n")
         self.root.update_idletasks()
         
@@ -606,13 +633,16 @@ class ModelEvaluationGUI:
         if eval_results is None:
             return
         
-        # Generate visualizations
-        self.results_text.insert(tk.END, "Generating visualizations...\n")
+        # Generate visualizations (with confidence)
+        self.results_text.insert(tk.END, "Generating visualizations with confidence scores...\n")
         self.root.update_idletasks()
         
-        # Plot sample results
-        plot_sample_results(self.sample_canvas, self.val_images, self.val_img_paths,
-                           self.val_labels, eval_results["predictions"], self.idx_to_label)
+        # Plot sample results WITH CONFIDENCE
+        plot_sample_results(
+            self.sample_canvas, self.val_images, self.val_img_paths,
+            self.val_labels, eval_results["predictions"],
+            eval_results["confidence_scores"], self.idx_to_label
+        )
         
         # Plot confusion matrix
         plot_confusion_matrix(self.conf_matrix_canvas, eval_results["conf_matrix"], self.class_names)
@@ -623,15 +653,18 @@ class ModelEvaluationGUI:
         # Plot class-wise metrics
         plot_class_metrics(self.class_metrics_canvas, eval_results, self.class_names)
         
+        # Calculate average confidence score
+        avg_confidence = np.mean(eval_results["confidence_scores"]) * 100
+        
         # Generate detailed results text
         results_text = f"""
 ========================================
 COMPREHENSIVE MODEL EVALUATION RESULTS
 ========================================
 Model Information:
-  - Model Name: {model_name}
+  - Model Name: {display_name}
   - Model Path: {model_path}
-  - Model Hash: {model_hash}
+  - Model Short Hash: {short_hash} | Full Hash: {full_hash}
   - Evaluation Time: {time.strftime('%Y-%m-%d %H:%M:%S')}
 
 ----------------------------------------
@@ -640,6 +673,7 @@ CORE CLASSIFICATION METRICS:
   - Macro Precision: {eval_results['macro_precision']:.2f}%
   - Macro Recall: {eval_results['macro_recall']:.2f}%
   - Macro F1-Score: {eval_results['macro_f1']:.2f}%
+  - Average Prediction Confidence: {avg_confidence:.2f}%
 
 ----------------------------------------
 INFERENCE PERFORMANCE:
@@ -682,14 +716,14 @@ RESULTS SAVED TO: {save_dir}
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, results_text)
         
-        # Save all results
+        # Save all results (including confidence)
         save_path = save_evaluation_results(
-            model_name, model_path, eval_results, 
+            display_name, model_path, eval_results, 
             self.train_history, self.class_names, save_dir
         )
         
-        self.results_text.insert(tk.END, f"\n✅ All results successfully saved to:\n{save_path}")
-        messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results have been saved.")
+        self.results_text.insert(tk.END, f"\n✅ All results (including confidence scores) saved to:\n{save_path}")
+        messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results (including confidence scores) have been saved.")
 
 # ===================== Main Function =====================
 def main():

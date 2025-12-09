@@ -1,8 +1,13 @@
 # ==============================================================================
-# Enhanced Model Evaluation GUI Tool (v4.0)
+# Enhanced Model Evaluation GUI Tool (v5.0)
 # File: evaluate_model_gui.py
 # Path: src/model/evaluate_model_gui.py
-# Features: Summary Page + All Numeric Metrics + Hash+Date + Confidence
+# Features: 
+# 1. Metrics Summary Page (All Numeric Metrics)
+# 2. Model Hash + Creation Date Display
+# 3. Prediction Confidence Scores
+# 4. Robust Error Handling
+# 5. Fixed FLOPs Formatting Issues
 # ==============================================================================
 
 import os
@@ -95,6 +100,7 @@ def load_all_evaluated_models_summary():
     summary_data = []
     
     if not os.path.exists(EVALUATION_DIR):
+        print(f"Evaluation directory not found: {EVALUATION_DIR}")  # 调试信息
         return summary_data
     
     # Iterate through all model evaluation directories
@@ -103,37 +109,59 @@ def load_all_evaluated_models_summary():
         metrics_path = os.path.join(eval_dir, "evaluation_metrics.csv")
         class_metrics_path = os.path.join(eval_dir, "class_wise_metrics.csv")
         
+        print(f"Checking: {metrics_path}")  # 调试信息
+        
         if os.path.exists(metrics_path):
-            # Load main metrics
-            metrics_df = pd.read_csv(metrics_path)
-            model_name = metrics_df["model_name"].iloc[0]
-            short_hash = model_name.split("(")[-1].split("-")[0] if "(" in model_name else model_hash[:6]
-            
-            # Calculate average class accuracy
-            avg_class_acc = 0
-            if os.path.exists(class_metrics_path):
-                class_df = pd.read_csv(class_metrics_path)
-                avg_class_acc = class_df["class_accuracy"].mean() * 100
-            
-            # Format numeric values
-            summary_data.append({
-                "model_name": model_name,
-                "short_hash": short_hash,
-                "accuracy": round(metrics_df["accuracy"].iloc[0], 2),
-                "precision": round(metrics_df["macro_precision"].iloc[0], 2),
-                "recall": round(metrics_df["macro_recall"].iloc[0], 2),
-                "f1_score": round(metrics_df["macro_f1"].iloc[0], 2),
-                "avg_class_accuracy": round(avg_class_acc, 2),
-                "total_params": f"{int(metrics_df['total_params'].iloc[0]):,}",
-                "trainable_params": f"{int(metrics_df['trainable_params'].iloc[0]):,}",
-                "flops": f"{int(metrics_df['flops'].iloc[0]):,}" if metrics_df['flops'].iloc[0] != "Calculation failed" else "N/A",
-                "avg_inference_time_ms": round(metrics_df["avg_inference_time_ms"].iloc[0], 2),
-                "fps": round(metrics_df["fps"].iloc[0], 2),
-                "mem_usage_mb": round(metrics_df["mem_usage_mb"].iloc[0], 2),
-                "model_size_mb": round(metrics_df["model_size_mb"].iloc[0], 2),
-                "evaluation_time": metrics_df["evaluation_time"].iloc[0]
-            })
+            try:
+                # Load main metrics
+                metrics_df = pd.read_csv(metrics_path)
+                model_name = metrics_df["model_name"].iloc[0]
+                
+                # 修复Hash提取逻辑（兼容多种命名格式）
+                short_hash = model_hash[:6]  # 直接用目录名的前6位（最可靠）
+                
+                # Calculate average class accuracy
+                avg_class_acc = 0
+                if os.path.exists(class_metrics_path):
+                    class_df = pd.read_csv(class_metrics_path)
+                    avg_class_acc = class_df["class_accuracy"].mean() * 100
+                
+                # ========== 修复FLOPs处理逻辑 ==========
+                flops_value = metrics_df['flops'].iloc[0]
+                flops_str = "N/A"
+                try:
+                    # 处理数字类型的FLOPs
+                    flops_num = float(flops_value)
+                    if flops_num > 0:
+                        flops_str = f"{int(flops_num):,}"
+                except:
+                    # 处理字符串类型（如"Calculation failed"）
+                    flops_str = "N/A"
+                
+                # Format numeric values
+                summary_data.append({
+                    "model_name": model_name,
+                    "short_hash": short_hash,
+                    "accuracy": round(float(metrics_df["accuracy"].iloc[0]), 2),
+                    "precision": round(float(metrics_df["macro_precision"].iloc[0]), 2),
+                    "recall": round(float(metrics_df["macro_recall"].iloc[0]), 2),
+                    "f1_score": round(float(metrics_df["macro_f1"].iloc[0]), 2),
+                    "avg_class_accuracy": round(avg_class_acc, 2),
+                    "total_params": f"{int(float(metrics_df['total_params'].iloc[0])):,}",
+                    "trainable_params": f"{int(float(metrics_df['trainable_params'].iloc[0])):,}",
+                    "flops": flops_str,  # 使用修复后的FLOPs字符串
+                    "avg_inference_time_ms": round(float(metrics_df["avg_inference_time_ms"].iloc[0]), 2),
+                    "fps": round(float(metrics_df["fps"].iloc[0]), 2),
+                    "mem_usage_mb": round(float(metrics_df["mem_usage_mb"].iloc[0]), 2),
+                    "model_size_mb": round(float(metrics_df["model_size_mb"].iloc[0]), 2),
+                    "evaluation_time": metrics_df["evaluation_time"].iloc[0]
+                })
+                print(f"Loaded data for: {model_name}")  # 调试信息
+            except Exception as e:
+                print(f"Error loading {metrics_path}: {str(e)}")  # 调试信息
+                continue
     
+    print(f"Total summary data loaded: {len(summary_data)}")  # 调试信息
     return summary_data
 
 # ===================== Utility: Load Validation Data =====================
@@ -261,7 +289,7 @@ def calculate_flops(model):
         opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
         flops = tf.compat.v1.profiler.profile(graph=graph, run_meta=run_meta, cmd='op', options=opts)
         
-        return flops.total_float_ops if flops else 0
+        return flops.total_float_ops if flops else "Calculation failed"
     except:
         return "Calculation failed"
 
@@ -316,6 +344,9 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
         
         # 6. FLOPs and model size
         flops = calculate_flops(model)
+        # 增强FLOPs类型判断
+        if isinstance(flops, str) or flops == 0:
+            flops = "Calculation failed"
         size_bytes, size_mb, size_gb = calculate_model_size(model_path)
         
         # 7. Confusion matrix
@@ -362,126 +393,193 @@ def evaluate_model(model_path, val_images, val_labels, class_names):
 # ===================== Utility: Visualization Functions (with Confidence) =====================
 def plot_confusion_matrix(canvas, conf_matrix, class_names):
     """Plot confusion matrix heatmap"""
-    fig, ax = plt.subplots(figsize=(10, 8))
-    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names, ax=ax)
-    ax.set_title("Confusion Matrix", fontsize=14, fontweight="bold")
-    ax.set_xlabel("Predicted Label", fontsize=12)
-    ax.set_ylabel("True Label", fontsize=12)
-    plt.xticks(rotation=45, ha="right")
-    plt.yticks(rotation=0)
-    
-    for widget in canvas.winfo_children():
-        widget.destroy()
-    plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
-    plot_canvas.draw()
-    plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    plt.close(fig)
-    return fig
+    try:
+        # 清空画布
+        for widget in canvas.winfo_children():
+            widget.destroy()
+        
+        # 缩短类别名（防止重叠）
+        short_class_names = [name[:10] + "..." if len(name) > 10 else name for name in class_names]
+        
+        fig, ax = plt.subplots(figsize=(12, 10))
+        sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues",
+                    xticklabels=short_class_names, yticklabels=short_class_names, ax=ax)
+        ax.set_title("Confusion Matrix", fontsize=14, fontweight="bold")
+        ax.set_xlabel("Predicted Label", fontsize=12)
+        ax.set_ylabel("True Label", fontsize=12)
+        plt.xticks(rotation=45, ha="right", fontsize=8)
+        plt.yticks(rotation=0, fontsize=8)
+        
+        # 调整布局
+        plt.tight_layout()
+        
+        # 显示图片
+        plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
+        plot_canvas.draw()
+        plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+        return fig
+    except Exception as e:
+        raise Exception(f"Plot confusion matrix error: {str(e)}")
 
 def plot_loss_curves(canvas, train_history):
     """Plot training/validation loss and accuracy curves"""
-    if train_history is None:
-        return None
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    ax1.plot(train_history["loss"], label="Training Loss", linewidth=2)
-    ax1.plot(train_history["val_loss"], label="Validation Loss", linewidth=2)
-    ax1.set_title("Training & Validation Loss", fontsize=14, fontweight="bold")
-    ax1.set_xlabel("Epoch", fontsize=12)
-    ax1.set_ylabel("Loss", fontsize=12)
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    ax2.plot(train_history["accuracy"], label="Training Accuracy", linewidth=2)
-    ax2.plot(train_history["val_accuracy"], label="Validation Accuracy", linewidth=2)
-    ax2.set_title("Training & Validation Accuracy", fontsize=14, fontweight="bold")
-    ax2.set_xlabel("Epoch", fontsize=12)
-    ax2.set_ylabel("Accuracy", fontsize=12)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
+    # 清空画布
     for widget in canvas.winfo_children():
         widget.destroy()
-    plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
-    plot_canvas.draw()
-    plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    plt.close(fig)
-    return fig
+    
+    if train_history is None or train_history.empty:
+        # 显示无数据提示
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.text(0.5, 0.5, "No training history available", ha="center", va="center", fontsize=14)
+        ax.axis('off')
+        plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
+        plot_canvas.draw()
+        plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+        return None
+    
+    try:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Loss curve
+        ax1.plot(train_history["loss"], label="Training Loss", linewidth=2)
+        ax1.plot(train_history["val_loss"], label="Validation Loss", linewidth=2)
+        ax1.set_title("Training & Validation Loss", fontsize=14, fontweight="bold")
+        ax1.set_xlabel("Epoch", fontsize=12)
+        ax1.set_ylabel("Loss", fontsize=12)
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Accuracy curve
+        ax2.plot(train_history["accuracy"], label="Training Accuracy", linewidth=2)
+        ax2.plot(train_history["val_accuracy"], label="Validation Accuracy", linewidth=2)
+        ax2.set_title("Training & Validation Accuracy", fontsize=14, fontweight="bold")
+        ax2.set_xlabel("Epoch", fontsize=12)
+        ax2.set_ylabel("Accuracy", fontsize=12)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # 调整布局
+        plt.tight_layout()
+        
+        # 显示图片
+        plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
+        plot_canvas.draw()
+        plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+        return fig
+    except Exception as e:
+        raise Exception(f"Plot loss curves error: {str(e)}")
 
 def plot_sample_results(canvas, val_images, val_img_paths, val_labels, pred_labels, confidence_scores, idx_to_label):
     """Display sample prediction results WITH CONFIDENCE SCORES"""
-    sample_indices = np.random.choice(len(val_images), NUM_SAMPLE_IMAGES, replace=False)
-    
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-    fig.suptitle("Model Prediction Results (8 Random Samples) - With Confidence Scores", fontsize=16, fontweight="bold")
-    axes = axes.flatten()
-    
-    for i, idx in enumerate(sample_indices):
-        # Display image
-        axes[i].imshow(val_images[idx])
-        axes[i].axis("off")
+    try:
+        # 确保样本数量不超过可用数据
+        sample_count = min(NUM_SAMPLE_IMAGES, len(val_images))
+        sample_indices = np.random.choice(len(val_images), sample_count, replace=False)
         
-        # Get labels and confidence
-        true_label = idx_to_label[val_labels[idx]]
-        pred_label = idx_to_label[pred_labels[idx]]
-        confidence = confidence_scores[idx] * 100  # Convert to percentage
-        color = "green" if true_label == pred_label else "red"
+        # 适配不同的子图布局（2行4列 → 动态行数）
+        rows = 2 if sample_count >=4 else 1
+        cols = min(4, sample_count)
         
-        # Set title with confidence score
-        axes[i].set_title(
-            f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.1f}%",
-            color=color, fontsize=10
-        )
-    
-    # Clear and display
-    for widget in canvas.winfo_children():
-        widget.destroy()
-    plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
-    plot_canvas.draw()
-    plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    plt.close(fig)
-    return fig
+        fig, axes = plt.subplots(rows, cols, figsize=(16, 8))
+        fig.suptitle("Model Prediction Results (8 Random Samples) - With Confidence Scores", fontsize=16, fontweight="bold")
+        
+        # 处理单行列的情况
+        if sample_count == 1:
+            axes = [axes]
+        elif rows == 1:
+            axes = axes.reshape(-1)
+        else:
+            axes = axes.flatten()
+        
+        # 清空画布
+        for widget in canvas.winfo_children():
+            widget.destroy()
+        
+        # 绘制样本
+        for i, idx in enumerate(sample_indices):
+            if i >= len(axes):
+                break  # 防止索引越界
+            axes[i].imshow(val_images[idx])
+            axes[i].axis("off")
+            
+            # Get labels and confidence
+            true_label = idx_to_label[val_labels[idx]]
+            pred_label = idx_to_label[pred_labels[idx]]
+            confidence = confidence_scores[idx] * 100  # Convert to percentage
+            color = "green" if true_label == pred_label else "red"
+            
+            # Set title with confidence score
+            axes[i].set_title(
+                f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.1f}%",
+                color=color, fontsize=10
+            )
+        
+        # 隐藏未使用的子图
+        for i in range(len(sample_indices), len(axes)):
+            axes[i].axis('off')
+        
+        # 显示图片
+        plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
+        plot_canvas.draw()
+        plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+        return fig
+    except Exception as e:
+        raise Exception(f"Plot sample error: {str(e)}")
 
 def plot_class_metrics(canvas, metrics, class_names):
     """Plot class-wise precision, recall, F1-score"""
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
-    
-    ax1.bar(range(len(class_names)), metrics["precision"], color="skyblue")
-    ax1.set_title("Class-wise Precision", fontsize=14, fontweight="bold")
-    ax1.set_xlabel("Class", fontsize=12)
-    ax1.set_ylabel("Precision", fontsize=12)
-    ax1.set_xticks(range(len(class_names)))
-    ax1.set_xticklabels(class_names, rotation=45, ha="right")
-    ax1.set_ylim(0, 1)
-    ax1.grid(True, alpha=0.3)
-    
-    ax2.bar(range(len(class_names)), metrics["recall"], color="lightgreen")
-    ax2.set_title("Class-wise Recall", fontsize=14, fontweight="bold")
-    ax2.set_xlabel("Class", fontsize=12)
-    ax2.set_ylabel("Recall", fontsize=12)
-    ax2.set_xticks(range(len(class_names)))
-    ax2.set_xticklabels(class_names, rotation=45, ha="right")
-    ax2.set_ylim(0, 1)
-    ax2.grid(True, alpha=0.3)
-    
-    ax3.bar(range(len(class_names)), metrics["f1"], color="salmon")
-    ax3.set_title("Class-wise F1-Score", fontsize=14, fontweight="bold")
-    ax3.set_xlabel("Class", fontsize=12)
-    ax3.set_ylabel("F1-Score", fontsize=12)
-    ax3.set_xticks(range(len(class_names)))
-    ax3.set_xticklabels(class_names, rotation=45, ha="right")
-    ax3.set_ylim(0, 1)
-    ax3.grid(True, alpha=0.3)
-    
-    for widget in canvas.winfo_children():
-        widget.destroy()
-    plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
-    plot_canvas.draw()
-    plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    plt.close(fig)
-    return fig
+    try:
+        # 清空画布
+        for widget in canvas.winfo_children():
+            widget.destroy()
+        
+        # 缩短类别名
+        short_class_names = [name[:10] + "..." if len(name) > 10 else name for name in class_names]
+        
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        
+        ax1.bar(range(len(class_names)), metrics["precision"], color="skyblue")
+        ax1.set_title("Class-wise Precision", fontsize=14, fontweight="bold")
+        ax1.set_xlabel("Class", fontsize=12)
+        ax1.set_ylabel("Precision", fontsize=12)
+        ax1.set_xticks(range(len(class_names)))
+        ax1.set_xticklabels(short_class_names, rotation=45, ha="right")
+        ax1.set_ylim(0, 1)
+        ax1.grid(True, alpha=0.3)
+        
+        ax2.bar(range(len(class_names)), metrics["recall"], color="lightgreen")
+        ax2.set_title("Class-wise Recall", fontsize=14, fontweight="bold")
+        ax2.set_xlabel("Class", fontsize=12)
+        ax2.set_ylabel("Recall", fontsize=12)
+        ax2.set_xticks(range(len(class_names)))
+        ax2.set_xticklabels(short_class_names, rotation=45, ha="right")
+        ax2.set_ylim(0, 1)
+        ax2.grid(True, alpha=0.3)
+        
+        ax3.bar(range(len(class_names)), metrics["f1"], color="salmon")
+        ax3.set_title("Class-wise F1-Score", fontsize=14, fontweight="bold")
+        ax3.set_xlabel("Class", fontsize=12)
+        ax3.set_ylabel("F1-Score", fontsize=12)
+        ax3.set_xticks(range(len(class_names)))
+        ax3.set_xticklabels(short_class_names, rotation=45, ha="right")
+        ax3.set_ylim(0, 1)
+        ax3.grid(True, alpha=0.3)
+        
+        # 调整布局
+        plt.tight_layout()
+        
+        # 显示图片
+        plot_canvas = FigureCanvasTkAgg(fig, master=canvas)
+        plot_canvas.draw()
+        plot_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+        return fig
+    except Exception as e:
+        raise Exception(f"Plot class metrics error: {str(e)}")
 
 # ===================== Utility: Save Results =====================
 def save_evaluation_results(model_name, model_path, eval_results, train_history, class_names, save_dir):
@@ -632,13 +730,21 @@ def update_summary_table(tree):
     summary_data = load_all_evaluated_models_summary()
     
     if not summary_data:
-        tree.insert("", tk.END, values=["No models evaluated yet"] + [""]*14)
+        # 显示更详细的提示
+        tree.insert("", tk.END, values=[
+            "No models evaluated yet! Please:", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            "1. Go to 'Model Selection' tab", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            "2. Select a model from dropdown", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            "3. Click 'Run Comprehensive Evaluation'", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            "4. Wait for evaluation to complete", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+        ])
         return
     
     # Add rows to treeview
     for data in summary_data:
         values = [
-            data["model_name"][:50] + "..." if len(data["model_name"]) > 50 else data["model_name"],
+            # 限制模型名长度，避免表格变形
+            (data["model_name"][:40] + "...") if len(data["model_name"]) > 40 else data["model_name"],
             data["short_hash"],
             data["accuracy"],
             data["precision"],
@@ -660,7 +766,7 @@ def update_summary_table(tree):
 class ModelEvaluationGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool (v4.0)")
+        self.root.title("Tomato Stress Classification - Advanced Model Evaluation Tool (v5.0)")
         self.root.geometry("1600x900")
         
         # Load validation data
@@ -734,56 +840,88 @@ class ModelEvaluationGUI:
     
     def run_evaluation(self):
         """Run full model evaluation workflow"""
-        # Get selected model metadata
-        selected_idx = self.model_combo.current()
-        display_name, model_path = self.model_files[selected_idx]
-        _, _, short_hash, full_hash = self.model_metadata[selected_idx]
-        
-        # Check for duplicate evaluation
-        is_duplicate, save_dir = check_duplicate_evaluation(full_hash)
-        
-        if is_duplicate and not get_overwrite_confirmation(display_name):
-            self.results_text.insert(tk.END, "Evaluation cancelled by user.\n")
-            return
-        
-        # Clear previous results
-        self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, f"Starting evaluation for: {display_name}\n")
-        self.results_text.insert(tk.END, f"Model path: {model_path}\n")
-        self.results_text.insert(tk.END, f"Model short hash: {short_hash} | Full hash: {full_hash}\n")
-        self.results_text.insert(tk.END, "Please wait - this may take several minutes...\n")
-        self.root.update_idletasks()
-        
-        # Run evaluation
-        eval_results = evaluate_model(model_path, self.val_images, self.val_labels, self.class_names)
-        if eval_results is None:
-            return
-        
-        # Generate visualizations (with confidence)
-        self.results_text.insert(tk.END, "Generating visualizations with confidence scores...\n")
-        self.root.update_idletasks()
-        
-        # Plot sample results WITH CONFIDENCE
-        plot_sample_results(
-            self.sample_canvas, self.val_images, self.val_img_paths,
-            self.val_labels, eval_results["predictions"],
-            eval_results["confidence_scores"], self.idx_to_label
-        )
-        
-        # Plot confusion matrix
-        plot_confusion_matrix(self.conf_matrix_canvas, eval_results["conf_matrix"], self.class_names)
-        
-        # Plot loss curves
-        plot_loss_curves(self.loss_canvas, self.train_history)
-        
-        # Plot class-wise metrics
-        plot_class_metrics(self.class_metrics_canvas, eval_results, self.class_names)
-        
-        # Calculate average confidence score
-        avg_confidence = np.mean(eval_results["confidence_scores"]) * 100
-        
-        # Generate detailed results text
-        results_text = f"""
+        try:  # 新增外层异常捕获
+            # Get selected model metadata
+            selected_idx = self.model_combo.current()
+            display_name, model_path = self.model_files[selected_idx]
+            _, _, short_hash, full_hash = self.model_metadata[selected_idx]
+            
+            # Check for duplicate evaluation
+            is_duplicate, save_dir = check_duplicate_evaluation(full_hash)
+            
+            if is_duplicate and not get_overwrite_confirmation(display_name):
+                self.results_text.insert(tk.END, "Evaluation cancelled by user.\n")
+                return
+            
+            # Clear previous results
+            self.results_text.delete(1.0, tk.END)
+            self.results_text.insert(tk.END, f"Starting evaluation for: {display_name}\n")
+            self.results_text.insert(tk.END, f"Model path: {model_path}\n")
+            self.results_text.insert(tk.END, f"Model short hash: {short_hash} | Full hash: {full_hash}\n")
+            self.results_text.insert(tk.END, "Please wait - this may take several minutes...\n")
+            self.root.update_idletasks()
+            
+            # Run evaluation
+            eval_results = evaluate_model(model_path, self.val_images, self.val_labels, self.class_names)
+            if eval_results is None:
+                return
+            
+            # Generate visualizations (with confidence)
+            self.results_text.insert(tk.END, "Generating visualizations with confidence scores...\n")
+            self.root.update_idletasks()
+            
+            # ========== 为每个可视化函数添加异常捕获 ==========
+            try:
+                # Plot sample results WITH CONFIDENCE
+                plot_sample_results(
+                    self.sample_canvas, self.val_images, self.val_img_paths,
+                    self.val_labels, eval_results["predictions"],
+                    eval_results["confidence_scores"], self.idx_to_label
+                )
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error plotting sample results: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            try:
+                # Plot confusion matrix
+                plot_confusion_matrix(self.conf_matrix_canvas, eval_results["conf_matrix"], self.class_names)
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error plotting confusion matrix: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            try:
+                # Plot loss curves
+                plot_loss_curves(self.loss_canvas, self.train_history)
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error plotting loss curves: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            try:
+                # Plot class-wise metrics
+                plot_class_metrics(self.class_metrics_canvas, eval_results, self.class_names)
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error plotting class metrics: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            # Calculate average confidence score
+            avg_confidence = np.mean(eval_results["confidence_scores"]) * 100
+            
+            # 先处理FLOPs的显示文本（单独提取，避免f-string嵌套错误）
+            flops_display = ""
+            if eval_results['flops'] != "Calculation failed":
+                try:
+                    flops_display = f"{int(eval_results['flops']):,} operations"
+                except:
+                    flops_display = "Calculation failed"
+            else:
+                flops_display = "Calculation failed"
+            
+            # Generate detailed results text
+            results_text = f"""
 ========================================
 COMPREHENSIVE MODEL EVALUATION RESULTS
 ========================================
@@ -819,42 +957,61 @@ MODEL SIZE & COMPLEXITY:
   - Total Parameters: {eval_results['total_params']:,}
   - Trainable Parameters: {eval_results['trainable_params']:,}
   - Non-trainable Parameters: {eval_results['non_trainable_params']:,}
-  - FLOPs: {eval_results['flops']:,} operations
+  - FLOPs: {flops_display}
   - Model File Size: {eval_results['model_size_mb']:.2f} MB ({eval_results['model_size_gb']:.4f} GB)
 
 ----------------------------------------
 CLASS-WISE ACCURACY (Top 5):
 """
-        
-        # Add top 5 class accuracies
-        class_acc = eval_results["class_accuracy"] * 100
-        top_classes = np.argsort(class_acc)[-5:][::-1]
-        for i, cls_idx in enumerate(top_classes):
-            results_text += f"  {i+1}. {self.class_names[cls_idx]}: {class_acc[cls_idx]:.2f}%\n"
-        
-        results_text += f"""
+            
+            # Add top 5 class accuracies
+            class_acc = eval_results["class_accuracy"] * 100
+            top_classes = np.argsort(class_acc)[-5:][::-1]
+            for i, cls_idx in enumerate(top_classes):
+                results_text += f"  {i+1}. {self.class_names[cls_idx]}: {class_acc[cls_idx]:.2f}%\n"
+            
+            results_text += f"""
 ========================================
 RESULTS SAVED TO: {save_dir}
 ========================================
 """
-        
-        # Update results text
-        self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, results_text)
-        
-        # Save all results (including confidence)
-        save_path = save_evaluation_results(
-            display_name, model_path, eval_results, 
-            self.train_history, self.class_names, save_dir
-        )
-        
-        # Refresh summary table
-        for child in self.summary_frame.winfo_children():
-            if isinstance(child, ttk.Treeview):
-                update_summary_table(child)
-        
-        self.results_text.insert(tk.END, f"\n✅ All results (including confidence scores) saved to:\n{save_path}")
-        messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results (including confidence scores) have been saved.\nSummary table has been updated.")
+            
+            # Update results text
+            self.results_text.delete(1.0, tk.END)
+            self.results_text.insert(tk.END, results_text)
+            
+            # ========== 保存结果时添加异常捕获 ==========
+            try:
+                # Save all results (including confidence)
+                save_path = save_evaluation_results(
+                    display_name, model_path, eval_results, 
+                    self.train_history, self.class_names, save_dir
+                )
+                self.results_text.insert(tk.END, f"\n✅ All results (including confidence scores) saved to:\n{save_path}")
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error saving results: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            # ========== 刷新汇总表时添加异常捕获 ==========
+            try:
+                # Refresh summary table
+                for child in self.summary_frame.winfo_children():
+                    if isinstance(child, ttk.Treeview):
+                        update_summary_table(child)
+            except Exception as e:
+                self.results_text.insert(tk.END, f"\n⚠️ Error refreshing summary table: {str(e)}\n")
+                import traceback
+                self.results_text.insert(tk.END, f"Traceback: {traceback.format_exc()}\n")
+            
+            # ========== 确保弹窗能显示 ==========
+            messagebox.showinfo("Success", "Evaluation completed successfully!\nAll results (including confidence scores) have been saved.\nSummary table has been updated.")
+            
+        except Exception as e:  # 捕获所有未处理的异常
+            self.results_text.insert(tk.END, f"\n❌ Critical error during evaluation: {str(e)}\n")
+            import traceback
+            self.results_text.insert(tk.END, f"Full traceback:\n{traceback.format_exc()}\n")
+            messagebox.showerror("Error", f"Evaluation failed:\n{str(e)}")
 
 # ===================== Main Function =====================
 def main():

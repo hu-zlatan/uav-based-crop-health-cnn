@@ -1,0 +1,37 @@
+Model: "sequential"
+_________________________________________________________________
+ Layer (type)                Output Shape              Param #   
+=================================================================
+ random_flip (RandomFlip)    (None, 256, 256, 3)       0         
+                                                                 
+ random_rotation (RandomRot  (None, 256, 256, 3)       0         
+ ation)                                                          
+                                                                 
+ random_zoom (RandomZoom)    (None, 256, 256, 3)       0         
+                                                                 
+ random_contrast (RandomCon  (None, 256, 256, 3)       0         
+ trast)                                                          
+                                                                 
+ random_translation (Random  (None, 256, 256, 3)       0         
+ Translation)                                                    
+                                                                 
+ mobilenetv2_1.00_224 (Func  (None, 8, 8, 1280)        2257984   
+ tional)                                                         
+                                                                 
+ global_average_pooling2d (  (None, 1280)              0         
+ GlobalAveragePooling2D)                                         
+                                                                 
+ dense (Dense)               (None, 512)               655872    
+                                                                 
+ batch_normalization (Batch  (None, 512)               2048      
+ Normalization)                                                  
+                                                                 
+ dropout (Dropout)           (None, 512)               0         
+                                                                 
+ dense_1 (Dense)             (None, 10)                5130      
+                                                                 
+=================================================================
+Total params: 2921034 (11.14 MB)
+Trainable params: 2286922 (8.72 MB)
+Non-trainable params: 634112 (2.42 MB)
+_________________________________________________________________

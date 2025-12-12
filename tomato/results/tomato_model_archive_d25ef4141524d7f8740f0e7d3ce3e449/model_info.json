@@ -1,0 +1,48 @@
+{
+    "basic_info": {
+        "model_name": "sequential",
+        "model_hash": "d25ef4141524d7f8740f0e7d3ce3e449",
+        "total_parameters": 2921034,
+        "trainable_parameters": 2286922,
+        "non_trainable_parameters": 634112,
+        "input_shape": null,
+        "output_shape": null,
+        "archive_creation_time": "2025-12-12 14:07:10",
+        "last_updated_time": "2025-12-12 14:07:10",
+        "model_archive_path": "D:\\Project-temp\\uav-based-crop-health-cnn\\tomato\\results\\tomato_model_archive_d25ef4141524d7f8740f0e7d3ce3e449\\model\\best_tomato_model.keras",
+        "archive_directory": "D:\\Project-temp\\uav-based-crop-health-cnn\\tomato\\results\\tomato_model_archive_d25ef4141524d7f8740f0e7d3ce3e449"
+    },
+    "training_metrics": {
+        "max_train_accuracy": 0.9790748953819276,
+        "max_val_accuracy": 0.9240087866783142,
+        "min_train_loss": 0.1101874336600303,
+        "min_val_loss": 0.2776075601577759,
+        "best_epoch_val_acc": 102,
+        "total_epochs": 122,
+        "plot_generation_time": "2025-12-12 14:07:10"
+    },
+    "dataset_info": {
+        "number_of_classes": 10,
+        "label_mapping": {
+            "Bacterial Spot": 0,
+            "Early Blight": 1,
+            "Healthy": 2,
+            "Late Blight": 3,
+            "Leaf Mold": 4,
+            "Septoria Leaf Spot": 5,
+            "Spider Mites Two-Spotted Spider Mite": 6,
+            "Target Spot": 7,
+            "Tomato Mosaic Virus": 8,
+            "Tomato Yellow Leaf Curl Virus": 9
+        }
+    },
+    "training_configuration": {
+        "batch_size": 32,
+        "base_learning_rate": 0.0001,
+        "fine_tune_learning_rate": 1e-05,
+        "image_size": [
+            256,
+            256
+        ]
+    }
+}
